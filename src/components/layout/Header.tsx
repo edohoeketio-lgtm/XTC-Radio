@@ -11,7 +11,7 @@ export function Header() {
     return (
         <header className="w-full flex items-center justify-between py-2 px-1">
             <div className="flex flex-col">
-                <h1 className="text-lg font-semibold tracking-tight text-primary">ME Radio</h1>
+                <h1 className="text-lg font-semibold tracking-tight text-primary">XTC Radio</h1>
                 <p className="text-[10px] uppercase tracking-wider text-secondary font-medium">Model 01 / Ref 294</p>
             </div>
 
