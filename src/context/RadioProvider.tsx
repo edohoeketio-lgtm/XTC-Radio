@@ -3,11 +3,11 @@ import { RadioContext, AudioRefsContext } from './RadioContexts';
 import { RadioState, RadioAction, Station } from '../types/radio';
 
 const ALL_AUDIO = [
-    '/audio/lofi.mp3',
+    '/audio/Birds & the Bees - Baby Keem.mp3',
+    '/audio/Good Flirts - Baby Keem.mp3',
     '/audio/Perfect Enemy - Vinnie Paz.mp3',
-    '/audio/electronic.mp3',
-    '/audio/sexy music..mp3',
-    '/audio/ambient.mp3'
+    '/audio/Poor Thang - J. Cole.mp3',
+    '/audio/sexy music..mp3'
 ];
 
 const STATIONS: Station[] = [
@@ -183,6 +183,8 @@ export function RadioProvider({ children }: { children: ReactNode }) {
     const activePlayer = useRef<'A' | 'B'>('A');
     const lastPlayedStationId = useRef<string | null>(null);
     const stationQueues = useRef<Record<string, string[]>>({});
+    const stateRef = useRef(state);
+    stateRef.current = state;
 
     // Helper to shuffle an array
     const shuffleArray = (array: string[]) => {
@@ -206,8 +208,21 @@ export function RadioProvider({ children }: { children: ReactNode }) {
             }
             stationQueues.current[stationId] = shuffled;
         }
+
+        const queue = stationQueues.current[stationId];
+
+        // Always check: if the next track is the currently playing song, skip it
+        if (currentUrl && queue.length > 1) {
+            const nextIndex = queue.findIndex((track: string) => !currentUrl.includes(track));
+            if (nextIndex > 0) {
+                // Move the non-matching track to the front
+                const [track] = queue.splice(nextIndex, 1);
+                queue.unshift(track);
+            }
+        }
+
         // Pop the next track
-        return stationQueues.current[stationId].shift()!;
+        return queue.shift()!;
     };
 
     const initAudio = () => {
@@ -269,13 +284,13 @@ export function RadioProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'ADD_LOG', text: 'Broadcast Audio Engine Initialized (Dual-Source)' });
     };
 
-    useEffect(() => {
+    const triggerCrossfade = async (targetStationId?: string) => {
         const ctx = audioContextRef.current;
-        if (!ctx || state.status !== 'PLAYING') {
-            return;
-        }
+        const currentState = stateRef.current;
+        if (!ctx || currentState.status !== 'PLAYING') return;
 
-        const targetStation = state.stations.find((s: Station) => s.id === state.activeStationId);
+        const effectiveStationId = targetStationId || currentState.activeStationId;
+        const targetStation = currentState.stations.find((s: Station) => s.id === effectiveStationId);
         if (!targetStation) return;
 
         const currentAudio = activePlayer.current === 'A' ? audioA.current : audioB.current;
@@ -285,58 +300,56 @@ export function RadioProvider({ children }: { children: ReactNode }) {
         const nextGain = activePlayer.current === 'A' ? gainB.current : gainA.current;
         const nextPlayerId = activePlayer.current === 'A' ? 'B' : 'A';
 
-        const performCrossfade = async () => {
-            if (!nextAudio || !nextGain || !currentGain || !currentAudio) return;
+        if (!nextAudio || !nextGain || !currentGain || !currentAudio) return;
 
-            // Only crossfade if we've actually switched stations
-            if (lastPlayedStationId.current === targetStation.id && state.status === 'PLAYING') return;
-            lastPlayedStationId.current = targetStation.id;
+        console.log(`Crossfading to ${targetStation.name} on Player ${nextPlayerId}`);
+        dispatch({ type: 'ADD_LOG', text: `Crossfading to next track in ${targetStation.name}...` });
 
-            console.log(`Crossfading to ${targetStation.name} on Player ${nextPlayerId}`);
-            dispatch({ type: 'ADD_LOG', text: `Crossfading to ${targetStation.name}...` });
+        // Pull from this station's dedicated shuffle queue
+        const nextTrack = getNextTrack(targetStation.id, targetStation.sourceUrls, currentAudio.src);
+        nextAudio.src = nextTrack;
 
-            // Pull from this station's dedicated shuffle queue
-            const nextTrack = getNextTrack(targetStation.id, targetStation.sourceUrls, currentAudio?.src);
-            nextAudio.src = nextTrack;
-
-            // Re-attach auto-shuffle listener on new tracks
-            nextAudio.onended = () => {
-                const nextRandomUrl = getNextTrack(targetStation.id, targetStation.sourceUrls, nextAudio.src);
-                nextAudio.src = nextRandomUrl;
-                nextAudio.play().catch((e: Error) => console.error('Auto-shuffle failed', e));
-                dispatch({ type: 'ADD_LOG', text: `Shuffled to next track in ${targetStation.name}` });
-            };
-
-            nextAudio.volume = 1;
-            nextGain.gain.setValueAtTime(0, ctx.currentTime);
-
-            try {
-                await nextAudio.play();
-
-                const FADE_TIME = 2.0;
-                const now = ctx.currentTime;
-
-                nextGain.gain.linearRampToValueAtTime(1, now + FADE_TIME);
-
-                currentGain.gain.setValueAtTime(1, now);
-                currentGain.gain.linearRampToValueAtTime(0, now + FADE_TIME);
-
-                activePlayer.current = nextPlayerId;
-
-                setTimeout(() => {
-                    currentAudio.pause();
-                    currentAudio.currentTime = 0;
-                }, FADE_TIME * 1000 + 100);
-
-            } catch (e) {
-                console.error('Crossfade failed', e);
-                dispatch({ type: 'ADD_LOG', text: 'Crossfade failed, retrying...', level: 'error' });
-            }
+        // Re-attach listener on new tracks
+        nextAudio.onended = () => {
+            triggerCrossfade(targetStation.id);
         };
 
-        performCrossfade();
+        nextAudio.volume = 1;
+        nextGain.gain.setValueAtTime(0, ctx.currentTime);
 
-    }, [state.activeStationId, state.stations, state.status]);
+        try {
+            await nextAudio.play();
+
+            const FADE_TIME = 2.0;
+            const now = ctx.currentTime;
+
+            nextGain.gain.linearRampToValueAtTime(1, now + FADE_TIME);
+
+            currentGain.gain.setValueAtTime(1, now);
+            currentGain.gain.linearRampToValueAtTime(0, now + FADE_TIME);
+
+            activePlayer.current = nextPlayerId;
+
+            setTimeout(() => {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+            }, FADE_TIME * 1000 + 100);
+
+        } catch (e) {
+            console.error('Crossfade failed', e);
+            dispatch({ type: 'ADD_LOG', text: 'Crossfade failed, retrying...', level: 'error' });
+        }
+    };
+
+    useEffect(() => {
+        if (state.status !== 'PLAYING') return;
+
+        // Only crossfade if we've actually switched stations
+        if (lastPlayedStationId.current === state.activeStationId) return;
+        lastPlayedStationId.current = state.activeStationId;
+
+        triggerCrossfade();
+    }, [state.activeStationId, state.status]);
 
     const togglePlay = async () => {
         if (!audioContextRef.current) initAudio();
@@ -358,10 +371,7 @@ export function RadioProvider({ children }: { children: ReactNode }) {
 
                         // Ensure auto-play on track end
                         player.onended = () => {
-                            const nextUrl = getNextTrack(s.id, s.sourceUrls, player.src);
-                            player.src = nextUrl;
-                            player.play().catch((e: Error) => console.error(e));
-                            dispatch({ type: 'ADD_LOG', text: `Shuffled to next track in ${s.name}` });
+                            triggerCrossfade(s.id);
                         };
                     }
                 }
