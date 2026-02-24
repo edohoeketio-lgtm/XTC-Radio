@@ -274,7 +274,7 @@ export function RadioProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        const targetStation = state.stations.find(s => s.id === state.activeStationId);
+        const targetStation = state.stations.find((s: Station) => s.id === state.activeStationId);
         if (!targetStation) return;
 
         const currentAudio = activePlayer.current === 'A' ? audioA.current : audioB.current;
